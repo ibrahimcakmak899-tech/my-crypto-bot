@@ -13,12 +13,13 @@ const bot = new TelegramBot(TOKEN, { polling: true });
 
 const chatIds = new Set();
 const groups = new Set();
-let autoScanRunning = false;
-let autoScanInterval = null;
+const userAutoScan = {}; // Per-user auto-scan state
+let globalScanInterval = null;
 
 // Dosya Yolları
 const SIGNALS_PATH = path.join(__dirname, "signals.json");
 const CHAT_IDS_PATH = path.join(__dirname, "chat_ids.json");
+const STATE_PATH = path.join(__dirname, "state.json");
 
 // --- VERİ TABANI İŞLEMLERİ ---
 function loadSignals() {
@@ -44,6 +45,14 @@ function loadChatIds() {
       if (data.groups) data.groups.forEach(id => groups.add(id));
     }
   } catch (e) { console.error("Kullanıcı yükleme hatası:", e); }
+  // Eski users.json dosyasından da yükle (migration)
+  try {
+    if (fs.existsSync(path.join(__dirname, "users.json"))) {
+      const oldIds = JSON.parse(fs.readFileSync(path.join(__dirname, "users.json"), "utf8"));
+      oldIds.forEach(id => chatIds.add(id));
+      saveChatIds();
+    }
+  } catch (e) {}
 }
 
 function saveChatIds() {
@@ -51,6 +60,25 @@ function saveChatIds() {
     const data = { users: Array.from(chatIds), groups: Array.from(groups) };
     fs.writeFileSync(CHAT_IDS_PATH, JSON.stringify(data));
   } catch (e) { console.error("Kaydetme hatası:", e); }
+}
+
+function loadState() {
+  try {
+    if (fs.existsSync(STATE_PATH)) {
+      return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function saveState() {
+  try {
+    fs.writeFileSync(STATE_PATH, JSON.stringify({
+      userAutoScan: Object.fromEntries(
+        Object.entries(userAutoScan).filter(([k, v]) => v)
+      )
+    }));
+  } catch (e) {}
 }
 
 function getUserSettings(userId) {
@@ -71,9 +99,10 @@ function updateUserSetting(userId, key, value) {
   } catch (e) {}
 }
 
+let signalCounter = 0;
 function addSignal(signal) {
   const signals = loadSignals();
-  signal.id = Date.now() + "_" + signal.symbol + "_" + signal.timeframe;
+  signal.id = Date.now() + "_" + signal.symbol + "_" + signal.timeframe + "_" + (++signalCounter);
   signal.status = "active";
   signal.timestamp = Date.now();
   signals.unshift(signal);
@@ -92,14 +121,17 @@ function updateSignalStatus(id, status) {
 }
 
 // --- SABİT KLAVYE ---
-function replyKeyboard() {
+function replyKeyboard(userId = null) {
+  let autoStatus = "KAPALI ❌";
+  if (userId && userAutoScan[userId]) autoStatus = "AÇIK ✅";
+  
   return {
     reply_markup: {
       keyboard: [
         [{ text: "🚀 Hızlı Tarama" }, { text: "📊 Derin Analiz" }],
         [{ text: "💰 Altcoinler" }, { text: "🦄 Meme Coinler" }],
         [{ text: "📈 Trend Takip" }, { text: "🕰️ Son Sinyaller" }],
-        [{ text: "🔔 Oto Sinyal: KAPALI" }, { text: "ℹ️ Yardım" }],
+        [{ text: `🔔 Oto Sinyal: ${autoStatus}` }, { text: "ℹ️ Yardım" }],
         [{ text: "⚙️ Ayarlarım" }, { text: "💼 Portföyüm" }],
         [{ text: "📊 Backtest" }]
       ],
@@ -128,13 +160,12 @@ function getExchangeForUser(userId) {
 
 // --- KAYITLI KULLANICILARI YÜKLE ---
 loadChatIds();
+const savedState = loadState();
+Object.assign(userAutoScan, savedState.userAutoScan || {});
 console.log(`📋 ${chatIds.size} kullanıcı, ${groups.size} grup yüklendi.`);
 
 // --- TEXT KOMUTLARI ---
 bot.onText(/\/start/, (msg) => {
-  chatIds.add(msg.chat.id);
-  saveChatIds();
-
   if (msg.chat.type === "group" || msg.chat.type === "supergroup") {
     groups.add(msg.chat.id);
     saveChatIds();
@@ -142,10 +173,11 @@ bot.onText(/\/start/, (msg) => {
     return;
   }
 
-  // Kullanıcı zaten kayıtlıysa direkt menü
+  // HATA DÜZELTME: Kayıt kontrolü EKLEME işleminden ÖNCE yap
   if (chatIds.has(msg.chat.id)) {
-    bot.sendMessage(msg.chat.id, `🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Aşağıdaki menüyü kullanabilirsin.`, { parse_mode: "HTML", ...replyKeyboard() });
+    bot.sendMessage(msg.chat.id, `🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Aşağıdaki menüyü kullanabilirsin.`, { parse_mode: "HTML", ...replyKeyboard(msg.from.id) });
   } else {
+    // İlk kez gelenler için hoş geldin
     bot.sendMessage(msg.chat.id, `👋 <b>Merhaba! Trading Pro Bot'a hoş geldin.</b>\n\n🤖 Ben senin kişisel teknik analiz asistanınım.\n📊 18 indikatör, grafik formasyonları ve AI skoru ile piyasayı tarıyorum.\n\n🚀 Analize başlamak için butona tıkla!`, { parse_mode: "HTML", ...startMenu() });
   }
 });
@@ -321,55 +353,59 @@ bot.onText(/ℹ️ Yardım/, (msg) => {
 // --- CALLBACK QUERY ---
 bot.on("callback_query", async (query) => {
   const data = query.data;
+  const userId = query.message.chat.id;
   bot.answerCallbackQuery(query.id);
 
   if (data === "start_btn") {
-    chatIds.add(query.message.chat.id);
+    chatIds.add(userId);
     saveChatIds();
-    bot.deleteMessage(query.message.chat.id, query.message.message_id);
-    bot.sendMessage(query.message.chat.id, `✅ <b>Sistem Başlatıldı!</b>\n\n🔔 Artık tüm sinyaller ve kırılımlar buraya düşecek.\nMenüden istediğin analizi seçebilirsin.`, { parse_mode: "HTML", ...replyKeyboard() });
+    bot.deleteMessage(userId, query.message.message_id);
+    bot.sendMessage(userId, `✅ <b>Sistem Başlatıldı!</b>\n\n🔔 Artık tüm sinyaller ve kırılımlar buraya düşecek.\nMenüden istediğin analizi seçebilirsin.`, { parse_mode: "HTML", ...replyKeyboard(userId) });
     return;
   }
 
   if (data === "back_menu") {
-    bot.editMessageText("🤖 <b>TRADING PRO BOT</b>\nAna menüye döndünüz.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
-    bot.sendMessage(query.message.chat.id, "📋 Menüyü kullan:", { ...replyKeyboard() });
+    bot.editMessageText("🤖 <b>TRADING PRO BOT</b>\nAna menüye döndünüz.", { chat_id: userId, message_id: query.message.message_id, parse_mode: "HTML" });
+    bot.sendMessage(userId, "📋 Menüyü kullan:", { ...replyKeyboard(userId) });
     return;
   }
 
   if (data.startsWith("detail_")) {
     const pair = data.split("detail_")[1];
-    const userId = query.message.chat.id;
-    const msg = await bot.sendMessage(query.message.chat.id, `🔎 ${pair} analiz ediliyor...`);
+    const msg = await bot.sendMessage(userId, `🔎 ${pair} analiz ediliyor...`);
     const exchange = getExchangeForUser(userId);
     const candles = await exchange.getKlines(pair, "1h", 200);
-    if (!candles.length) { bot.editMessageText(`❌ Veri yok.`, { chat_id: query.message.chat.id, message_id: msg.message_id }); return; }
+    if (!candles.length) { bot.editMessageText(`❌ Veri yok.`, { chat_id: userId, message_id: msg.message_id }); return; }
     const signal = SignalGenerator.generate(candles, pair, "1h");
     if (signal) {
-      bot.editMessageText(formatSignal(signal), { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML" });
+      bot.editMessageText(formatSignal(signal), { chat_id: userId, message_id: msg.message_id, parse_mode: "HTML" });
       addSignal(signal);
-    } else { bot.editMessageText(`📊 ${pair}: Net sinyal yok.`, { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML" }); }
+    } else { bot.editMessageText(`📊 ${pair}: Net sinyal yok.`, { chat_id: userId, message_id: msg.message_id, parse_mode: "HTML" }); }
     return;
   }
 
   if (data.startsWith("scan_")) {
     const cat = data.split("scan_")[1];
-    bot.editMessageText("📂 <b>Kategoriler</b>\nSeçin:", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...scanMenu(cat) });
+    const mappedCat = cat === "fast" ? "major" : cat === "deep" ? "trend" : cat;
+    bot.editMessageText("📂 <b>Kategoriler</b>\nSeçin:", { chat_id: userId, message_id: query.message.message_id, parse_mode: "HTML", ...scanMenu(mappedCat) });
     return;
   }
 
   if (data === "toggle_auto") {
-    autoScanRunning = !autoScanRunning;
-    const status = autoScanRunning ? "AÇIK ✅" : "KAPALI ❌";
-    bot.editMessageText(autoScanRunning ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı!" : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
-    const newKeyboard = replyKeyboard();
-    newKeyboard.reply_markup.keyboard[3][0].text = `🔔 Oto Sinyal: ${status}`;
-    bot.sendMessage(query.message.chat.id, `Oto Sinyal: ${status}`, { ...newKeyboard });
-    if (autoScanRunning) {
-      clearInterval(autoScanInterval);
-      autoScanInterval = setInterval(runAutoScan, CHECK_INTERVAL);
-      runAutoScan();
-    } else clearInterval(autoScanInterval);
+    userAutoScan[userId] = !userAutoScan[userId];
+    saveState();
+    const status = userAutoScan[userId] ? "AÇIK ✅" : "KAPALI ❌";
+    bot.editMessageText(userAutoScan[userId] ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı!" : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: userId, message_id: query.message.message_id, parse_mode: "HTML" });
+    bot.sendMessage(userId, `Oto Sinyal: ${status}`, { ...replyKeyboard(userId) });
+    
+    if (!globalScanInterval && Object.values(userAutoScan).some(v => v)) {
+      globalScanInterval = setInterval(runGlobalScan, CHECK_INTERVAL);
+      runGlobalScan();
+    }
+    if (!Object.values(userAutoScan).some(v => v) && globalScanInterval) {
+      clearInterval(globalScanInterval);
+      globalScanInterval = null;
+    }
     return;
   }
 
@@ -386,7 +422,7 @@ bot.on("callback_query", async (query) => {
         txt += "\n";
       });
     }
-    bot.editMessageText(txt, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
+    bot.editMessageText(txt, { chat_id: userId, message_id: query.message.message_id, parse_mode: "HTML" });
     return;
   }
 });
@@ -404,11 +440,10 @@ function scanMenu(category) {
 }
 
 function getPairsByCategory(cat) {
-  if (cat === "forex") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT"];
   if (cat === "meme") return ["DOGE/USDT", "PEPE/USDT", "WIF/USDT", "SHIB/USDT", "FLOKI/USDT"];
   if (cat === "major") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
-  if (cat === "trend") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT"];
-  return TRADING_PAIRS.slice(0, 15); 
+  if (cat === "trend") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT", "ADA/USDT", "NEAR/USDT"];
+  return TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR") && !p.startsWith("GBP") && !p.startsWith("AUD") && !p.startsWith("USD")).slice(0, 15); 
 }
 
 // --- SİNYAL FORMATI ---
@@ -445,52 +480,61 @@ ${signal.aiScore > 80 ? "🔥 ÇOK YÜKSEK İHTİMAL" : signal.aiScore > 70 ? "�
 `.trim();
 }
 
-// --- OTOMATİK TARAMA ---
-let scanIndex = 0;
+// --- OTOMATİK TARAMA (PER-USER) ---
+const scanStates = {}; // Per-user scan index
 
-async function runAutoScan() {
-  if (!autoScanRunning) return;
-  
+async function runGlobalScan() {
+  const activeUsers = Object.keys(userAutoScan).filter(uid => userAutoScan[uid]);
+  if (activeUsers.length === 0) return;
+
   const targets = TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR") && !p.startsWith("GBP") && !p.startsWith("AUD") && !p.startsWith("USD"));
-  console.log(`🔍 Otomatik tarama başlıyor... (${targets.length} coin)`);
+  console.log(`🔍 Global tarama... ${activeUsers.length} aktif kullanıcı, ${targets.length} coin`);
   
-  // Her turda 3 coin tara, hepsini 4 timeframe'de
-  const batchSize = 3;
   const timeframes = ["5m", "15m", "1h", "4h"];
-  const batch = targets.slice(scanIndex, scanIndex + batchSize);
-  
-  scanIndex = (scanIndex + batchSize) % targets.length;
-  if (scanIndex === 0) console.log("🔄 Tüm coinler tarandı, başa dönülüyor.");
-  
-  for (const pair of batch) {
-    for (const tf of timeframes) {
-      try {
-        const exchange = new ExchangeClient("bitget"); // Public veri için API'siz
-        const candles = await exchange.getKlines(pair, tf, 200);
-        if (candles.length < 50) continue;
-        
-        const signal = SignalGenerator.generate(candles, pair, tf);
-        
-        if (signal && signal.aiScore >= 70) {
-          addSignal(signal);
-          notifySignal(signal);
-        }
+  const batchSize = 3;
 
-        // Sadece 4h'te kırılım kontrolü
-        if (tf === "4h") {
-          const analysis = require("./analysis");
-          const ind = analysis.compute(candles);
-          const breakouts = SignalGenerator.checkBreakouts(ind, pair);
-          for (const b of breakouts) {
-            const signals = loadSignals();
-            const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
-            if (!recentBreakout) {
-               notifyBreakout(b);
-               addSignal({ symbol: pair, type: b.type === "BREAKOUT" ? "LONG" : "SHORT", entry: b.price, aiScore: 90, timestamp: Date.now(), reasons: ["Kırılım Tespiti"] });
+  for (const uid of activeUsers) {
+    if (!scanStates[uid]) scanStates[uid] = 0;
+    const batch = targets.slice(scanStates[uid], scanStates[uid] + batchSize);
+    scanStates[uid] = (scanStates[uid] + batchSize) % targets.length;
+
+    for (const pair of batch) {
+      for (const tf of timeframes) {
+        try {
+          const exchange = new ExchangeClient("bitget");
+          const candles = await exchange.getKlines(pair, tf, 200);
+          if (candles.length < 50) continue;
+          
+          const signal = SignalGenerator.generate(candles, pair, tf);
+          
+          if (signal) {
+            const settings = getUserSettings(parseInt(uid));
+            if (signal.aiScore >= settings.minScore) {
+              if (!settings.longOnly || signal.type === "LONG") {
+                if (!settings.shortOnly || signal.type === "SHORT") {
+                  addSignal(signal);
+                  // Sadece bu kullanıcıya gönder
+                  try { await bot.sendMessage(parseInt(uid), formatSignal(signal), { parse_mode: "HTML" }); }
+                  catch(e) { console.error(`❌ Bildirim hatası (${uid}):`, e.message); }
+                }
+              }
             }
           }
-        }
-      } catch (e) { /* sessiz geç */ }
+
+          if (tf === "4h") {
+            const analysis = require("./analysis");
+            const ind = analysis.compute(candles);
+            const breakouts = SignalGenerator.checkBreakouts(ind, pair);
+            for (const b of breakouts) {
+              const signals = loadSignals();
+              const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
+              if (!recentBreakout) {
+                try { await bot.sendMessage(parseInt(uid), `🚨 <b>KIRILIM!</b> ${b.msg}\n${b.symbol} @ $${b.price}`, { parse_mode: "HTML" }); } catch(e) {}
+              }
+            }
+          }
+        } catch (e) { /* sessiz geç */ }
+      }
     }
   }
 
@@ -533,15 +577,6 @@ async function checkActiveTrades() {
 function notifyBreakout(b) {
   const msg = `🚨 <b>KIRILIM TESPİT EDİLDİ!</b> 🚨\n${b.msg}\n\n<b>Sembol:</b> ${b.symbol}\n<b>Fiyat:</b> $${b.price}\n<b>Seviye:</b> $${b.level}\n\n🔥 <b>HACİM DESTEKLİ!</b>`;
   for (const cid of [...chatIds, ...groups]) { try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {} }
-}
-
-function notifySignal(signal) {
-  const msg = formatSignal(signal);
-  console.log(`📡 Sinyal Bildirimi: ${signal.symbol} (${signal.timeframe}) - ${chatIds.size + groups.size} hedefe gönderiliyor.`);
-  for (const cid of [...chatIds, ...groups]) { 
-      try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } 
-      catch(e) { console.error(`❌ Bildirim hatası (ID: ${cid}):`, e.message); } 
-  }
 }
 
 // --- RENDER KEEP-ALIVE ---
