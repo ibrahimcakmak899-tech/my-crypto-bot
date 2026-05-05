@@ -132,11 +132,14 @@ function getPairsByCategory(cat) {
 loadChatIds();
 
 bot.onText(/\/start/, (msg) => {
-  chatIds.add(msg.chat.id);
-  saveChatIds();
-  
-  // İlk açılışta buton göster
-  bot.sendMessage(msg.chat.id, 
+  // Kullanıcı daha önce kayıt olmuş mu?
+  if (chatIds.has(msg.chat.id)) {
+    bot.sendMessage(msg.chat.id, 
+      `🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Menüden işlem yapabilirsin.`, 
+      { parse_mode: "HTML", ...mainMenu() }
+    );
+  } else {
+    bot.sendMessage(msg.chat.id,
     `👋 <b>Merhaba! Trading Pro Bot'a hoş geldin.</b>\n\n` +
     `🤖 Ben senin kişisel teknik analiz asistanınım.\n` +
     `📊 18 indikatör, grafik formasyonları ve AI skoru ile piyasayı tarıyorum.\n\n` +
