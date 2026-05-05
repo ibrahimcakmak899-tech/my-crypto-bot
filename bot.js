@@ -145,7 +145,8 @@ bot.onText(/\/start/, (msg) => {
     `📊 18 indikatör, grafik formasyonları ve AI skoru ile piyasayı tarıyorum.\n\n` +
     `🚀 Analize başlamak için butona tıkla!`, 
     { parse_mode: "HTML", ...startMenu() }
-  );
+    );
+  }
 });
 
 bot.on("callback_query", async (query) => {
