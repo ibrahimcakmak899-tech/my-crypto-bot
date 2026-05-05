@@ -217,8 +217,12 @@ async function runGlobalScan() {
   if (!activeUsers.length) return;
 
   console.log("🔍 Tarama başladı...");
-  const targets = ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
-  const tfs = ["1h", "4h"];
+  
+  // Tüm USDT çiftlerini tara (Gold/Forex hariç)
+  const targets = TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR"));
+  
+  // Tüm zaman dilimleri (Scalp dahil)
+  const tfs = ["5m", "15m", "1h", "4h"];
 
   for (const pair of targets) {
     for (const tf of tfs) {
