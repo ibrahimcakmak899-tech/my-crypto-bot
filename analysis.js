@@ -71,7 +71,7 @@ class Analysis {
       const mean = slice.reduce((a, b) => a + b, 0) / period;
       const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
       const std = Math.sqrt(variance);
-      bands.push({ upper: mean + stdMult * std, middle: mean, lower: mean - stdMult * std, width: stdMult * std / mean * 100 });
+      bands.push({ upper: mean + stdMult * std, middle: mean, lower: mean - stdMult * std });
     }
     return bands;
   }
@@ -87,22 +87,11 @@ class Analysis {
       const k = high === low ? 50 : ((close - low) / (high - low)) * 100;
       kValues.push(k);
     }
-    // Smoothing (Simple Moving Average of K)
     const kSmoothed = [];
-    for (let i = smoothing - 1; i < kValues.length; i++) {
-      kSmoothed.push(kValues.slice(i - smoothing + 1, i + 1).reduce((a, b) => a + b, 0) / smoothing);
-    }
-    // D = SMA of K
+    for (let i = smoothing - 1; i < kValues.length; i++) kSmoothed.push(kValues.slice(i - smoothing + 1, i + 1).reduce((a, b) => a + b, 0) / smoothing);
     const dSmoothed = [];
-    if (kSmoothed.length >= smoothing) {
-      for (let i = smoothing - 1; i < kSmoothed.length; i++) {
-        dSmoothed.push(kSmoothed.slice(i - smoothing + 1, i + 1).reduce((a, b) => a + b, 0) / smoothing);
-      }
-    }
-    return {
-      k: kSmoothed.length ? kSmoothed[kSmoothed.length - 1] : 50,
-      d: dSmoothed.length ? dSmoothed[dSmoothed.length - 1] : 50
-    };
+    if (kSmoothed.length >= smoothing) for (let i = smoothing - 1; i < kSmoothed.length; i++) dSmoothed.push(kSmoothed.slice(i - smoothing + 1, i + 1).reduce((a, b) => a + b, 0) / smoothing);
+    return { k: kSmoothed.length ? kSmoothed[kSmoothed.length - 1] : 50, d: dSmoothed.length ? dSmoothed[dSmoothed.length - 1] : 50 };
   }
 
   static adx(candles, period = 14) {
@@ -149,39 +138,29 @@ class Analysis {
     const range = last.high - last.low;
     if (range === 0) return patterns;
 
-    // Doji
     if (body < range * 0.1) patterns.push({ name: "Doji", type: "NEUTRAL", strength: 2 });
-    
-    // Hammer / Inverted Hammer
     const lowerWick = Math.min(last.open, last.close) - last.low;
     const upperWick = last.high - Math.max(last.open, last.close);
     if (lowerWick > body * 2 && last.close > last.open) patterns.push({ name: "Çekiç (Hammer)", type: "BULLISH", strength: 3 });
     if (upperWick > body * 2 && last.close < last.open) patterns.push({ name: "Ters Çekiç", type: "BEARISH", strength: 3 });
-    
-    // Marubozu
     if (body > range * 0.9) {
       if (last.close > last.open) patterns.push({ name: "Bullish Marubozu", type: "BULLISH", strength: 3 });
       else patterns.push({ name: "Bearish Marubozu", type: "BEARISH", strength: 3 });
     }
-
-    // Engulfing
     if (prev.close < prev.open && last.close > last.open && last.close > prev.close && last.open < prev.close) patterns.push({ name: "Bullish Engulfing", type: "BULLISH", strength: 4 });
     if (prev.close > prev.open && last.close < last.open && last.close < prev.open && last.open > prev.close) patterns.push({ name: "Bearish Engulfing", type: "BEARISH", strength: 4 });
-
-    // Morning / Evening Star
     if (prev2.close < prev2.open && Math.abs(prev.close - prev.open) < range * 0.3 && last.close > last.open && last.close > prev.close + body) patterns.push({ name: "Sabah Yıldızı", type: "BULLISH", strength: 3 });
     if (prev2.close > prev2.open && Math.abs(prev.close - prev.open) < range * 0.3 && last.close < last.open && last.close < prev.close - body) patterns.push({ name: "Akşam Yıldızı", type: "BEARISH", strength: 3 });
-    
-    // Three White Soldiers / Black Crows (simplified)
-    if (candles.length >= 4) {
-        const c3 = candles[candles.length-4];
-        const allGreen = candles.slice(-4).every(c => c.close > c.open);
-        const allRed = candles.slice(-4).every(c => c.close < c.open);
-        if (allGreen && candles.slice(-4).every((c,i) => i>0 ? c.close > candles.slice(-4)[i-1].close : true)) patterns.push({ name: "3 Beyaz Asker", type: "BULLISH", strength: 3 });
-        if (allRed && candles.slice(-4).every((c,i) => i>0 ? c.close < candles.slice(-4)[i-1].close : true)) patterns.push({ name: "3 Siyah Karga", type: "BEARISH", strength: 3 });
-    }
-
     return patterns;
+  }
+
+  static calculateLevels(candles) {
+    // Son 50 mumun en yüksek ve en düşük değerleri (Basit Destek/Direnç)
+    const lookback = 50;
+    const slice = candles.slice(-lookback);
+    const resistance = Math.max(...slice.map(c => c.high));
+    const support = Math.min(...slice.map(c => c.low));
+    return { resistance, support };
   }
 
   static compute(candles) {
@@ -197,6 +176,7 @@ class Analysis {
     const adx = this.adx(candles);
     const vol = this.volumeAnalysis(candles);
     const patterns = this.candlestickPatterns(candles);
+    const levels = this.calculateLevels(candles);
 
     const idx = closes.length - 1;
     return {
@@ -207,7 +187,6 @@ class Analysis {
       macdSignal: macd.signalLine.length ? macd.signalLine[macd.signalLine.length - 1] : 0,
       bbUpper: bb.length ? bb[bb.length - 1].upper : closes[idx],
       bbLower: bb.length ? bb[bb.length - 1].lower : closes[idx],
-      bbMiddle: bb.length ? bb[bb.length - 1].middle : closes[idx],
       atr: atr.length ? atr[atr.length - 1] : 0,
       ema50: ema50.length ? ema50[ema50.length - 1] : closes[idx],
       ema200: ema200.length ? ema200[ema200.length - 1] : closes[idx],
@@ -220,6 +199,8 @@ class Analysis {
       volumeRatio: vol.ratio,
       patterns,
       volume: candles[idx].volume,
+      resistance: levels.resistance,
+      support: levels.support,
     };
   }
 }
