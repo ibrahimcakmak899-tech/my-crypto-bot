@@ -123,19 +123,6 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, "🤖 <b>TRADING PRO BOT</b>\nSistem aktif! Menüyü kullan.", { parse_mode: "HTML", ...getKeyboard(msg.from.id) });
 });
 
-// Alt menü butonları
-bot.onText(/🚀 Hızlı Tarama/, (msg) => sendSubMenu(msg, [["BTC","ETH"],["SOL","XRP"]]));
-bot.onText(/📊 Derin Analiz/, (msg) => sendSubMenu(msg, [["BTC","AVAX"],["LINK","DOT"]]));
-bot.onText(/💰 Altcoinler/, (msg) => sendSubMenu(msg, [["ADA","NEAR"],["APT","ARB"]]));
-bot.onText(/🦄 Meme Coinler/, (msg) => sendSubMenu(msg, [["DOGE","PEPE"],["WIF","FLOKI"]]));
-bot.onText(/📈 Trend Takip/, (msg) => sendSubMenu(msg, [["BTC","ETH"],["SOL","AVAX"]]));
-
-function sendSubMenu(msg, pairs) {
-  const kb = pairs.map(row => row.map(p => ({ text: p, callback_data: "d_" + p + "/USDT" })));
-  kb.push([{ text: "🔙 Geri", callback_data: "back" }]);
-  bot.sendMessage(msg.chat.id, "📂 Seçin:", { reply_markup: { inline_keyboard: kb } });
-}
-
 // Oto Sinyal Toggle Butonu
 bot.onText(/🔔 Oto Sinyal/, (msg) => {
   const uid = Number(msg.from.id);
@@ -210,12 +197,9 @@ function getKeyboard(userId) {
   return {
     reply_markup: {
       keyboard: [
-        [{ text: "🚀 Hızlı Tarama" }, { text: "📊 Derin Analiz" }],
-        [{ text: "💰 Altcoinler" }, { text: "🦄 Meme Coinler" }],
-        [{ text: "📈 Trend Takip" }, { text: "🕰️ Son Sinyaller" }],
-        [{ text: "🔔 Oto Sinyal: " + autoText }, { text: "ℹ️ Yardım" }],
-        [{ text: "⚙️ Ayarlarım" }, { text: "💼 Portföyüm" }],
-        [{ text: "📊 Backtest" }]
+        [{ text: "🔔 Oto Sinyal: " + autoText }],
+        [{ text: "🕰️ Son Sinyaller" }, { text: "⚙️ Ayarlarım" }],
+        [{ text: "ℹ️ Yardım" }]
       ],
       resize_keyboard: true
     }
