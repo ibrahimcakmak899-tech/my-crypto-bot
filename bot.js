@@ -71,37 +71,28 @@ function updateSignalStatus(id, status) {
   }
 }
 
+// --- SABİT KLAVYE (REPLY KEYBOARD) ---
+function replyKeyboard() {
+  return {
+    reply_markup: {
+      keyboard: [
+        [{ text: "🚀 Hızlı Tarama" }, { text: "📊 Derin Analiz" }],
+        [{ text: "💰 Altcoinler" }, { text: "🦄 Meme Coinler" }],
+        [{ text: "📈 Trend Takip" }, { text: "🕰️ Son Sinyaller" }],
+        [{ text: "🔔 Oto Sinyal: KAPALI" }, { text: "ℹ️ Yardım" }]
+      ],
+      resize_keyboard: true,
+      persistent: true
+    }
+  };
+}
+
 // --- MENÜ TANIMLARI ---
 function startMenu() {
   return {
     reply_markup: {
       inline_keyboard: [
         [{ text: "🚀 SİNYALLERİ BAŞLAT", callback_data: "start_btn" }]
-      ]
-    }
-  };
-}
-
-function mainMenu() {
-  return {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "🚀 Hızlı Tarama", callback_data: "scan_fast" },
-          { text: "🔍 Derin Analiz", callback_data: "scan_deep" }
-        ],
-        [
-          { text: "💰 Altın & Forex", callback_data: "scan_forex" },
-          { text: "🦄 Meme Coinler", callback_data: "scan_meme" }
-        ],
-        [
-          { text: "📊 Trend Takibi", callback_data: "scan_trend" },
-          { text: "🕰️ Son Sinyaller", callback_data: "history" }
-        ],
-        [
-          { text: "🔔 Oto Sinyal", callback_data: "toggle_auto" },
-          { text: "ℹ️ Yardım", callback_data: "help" }
-        ]
       ]
     }
   };
@@ -126,17 +117,57 @@ function getPairsByCategory(cat) {
   return TRADING_PAIRS.slice(0, 15); 
 }
 
+// --- SABİT BUTONLAR (TEXT COMMANDS) ---
+bot.onText(/🚀 Hızlı Tarama/, (msg) => {
+  bot.sendMessage(msg.chat.id, "📂 <b>Kategoriler</b>\nSeçin:", { parse_mode: "HTML", ...scanMenu("fast") });
+});
+
+bot.onText(/📊 Derin Analiz/, (msg) => {
+  bot.sendMessage(msg.chat.id, "📂 <b>Kategoriler</b>\nSeçin:", { parse_mode: "HTML", ...scanMenu("deep") });
+});
+
+bot.onText(/💰 Altcoinler/, (msg) => {
+  bot.sendMessage(msg.chat.id, "📂 <b>Kategoriler</b>\nSeçin:", { parse_mode: "HTML", ...scanMenu("major") });
+});
+
+bot.onText(/🦄 Meme Coinler/, (msg) => {
+  bot.sendMessage(msg.chat.id, "📂 <b>Kategoriler</b>\nSeçin:", { parse_mode: "HTML", ...scanMenu("meme") });
+});
+
+bot.onText(/📈 Trend Takip/, (msg) => {
+  bot.sendMessage(msg.chat.id, "📂 <b>Kategoriler</b>\nSeçin:", { parse_mode: "HTML", ...scanMenu("trend") });
+});
+
+bot.onText(/🕰️ Son Sinyaller/, (msg) => {
+  const signals = loadSignals();
+  let txt = "🕰️ <b>Son Sinyaller ve Durumları</b>\n\n";
+  if (signals.length === 0) txt += "Henüz hiç sinyal yok.";
+  else {
+    signals.slice(0, 10).forEach(s => {
+      let icon = s.status === "sl" ? "❌" : s.status.startsWith("tp") ? "✅" : "⏳";
+      txt += `${icon} <b>${s.symbol}</b> (${s.type}) | Giriş: $${s.entry} | Skor: ${s.aiScore}\n`;
+      if (s.status !== "active") txt += `   <b>Sonuç: ${s.status.toUpperCase()}</b>\n`;
+      else txt += `   SL: $${s.sl} | TP1: $${s.tp1}\n`;
+      txt += "\n";
+    });
+  }
+  bot.sendMessage(msg.chat.id, txt, { parse_mode: "HTML" });
+});
+
+bot.onText(/ℹ️ Yardım/, (msg) => {
+  bot.sendMessage(msg.chat.id, "ℹ️ <b>BOT HAKKINDA</b>\n\n📈 18 İndikatör, Grafik Formasyonları, AI Skoru.\n🚨 Kırılım takibi ve otomatik sinyal bildirimleri.", { parse_mode: "HTML" });
+});
+
 // --- BOT OLAYLARI ---
 
 // Kayıtlı kullanıcıları yükle
 loadChatIds();
 
 bot.onText(/\/start/, (msg) => {
-  // Kullanıcı daha önce kayıt olmuş mu?
   if (chatIds.has(msg.chat.id)) {
     bot.sendMessage(msg.chat.id, 
-      `🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Menüden işlem yapabilirsin.`, 
-      { parse_mode: "HTML", ...mainMenu() }
+      `🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Aşağıdaki menüyü kullanabilirsin.`, 
+      { parse_mode: "HTML", ...replyKeyboard() }
     );
   } else {
     bot.sendMessage(msg.chat.id,
@@ -158,22 +189,20 @@ bot.on("callback_query", async (query) => {
     chatIds.add(query.message.chat.id);
     saveChatIds();
     
-    bot.editMessageText(
+    bot.deleteMessage(query.message.chat.id, query.message.message_id);
+    
+    bot.sendMessage(query.message.chat.id,
       `✅ <b>Sistem Başlatıldı!</b>\n\n` +
       `🔔 Artık tüm sinyaller ve kırılımlar buraya düşecek.\n` +
       `Menüden istediğin analizi seçebilirsin.`,
-      { 
-        chat_id: query.message.chat.id, 
-        message_id: query.message.message_id, 
-        parse_mode: "HTML", 
-        ...mainMenu() 
-      }
+      { parse_mode: "HTML", ...replyKeyboard() }
     );
     return;
   }
 
   if (data === "back_menu") {
-    bot.editMessageText("🤖 <b>TRADING PRO BOT</b>\nAna menüye döndünüz.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText("🤖 <b>TRADING PRO BOT</b>\nAna menüye döndünüz.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
+    bot.sendMessage(query.message.chat.id, "📋 Menüyü kullan:", { ...replyKeyboard() });
     return;
   }
 
@@ -197,7 +226,7 @@ bot.on("callback_query", async (query) => {
       });
     }
     
-    bot.editMessageText(msg, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText(msg, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
     return;
   }
 
@@ -222,7 +251,12 @@ bot.on("callback_query", async (query) => {
 
   if (data === "toggle_auto") {
     autoScanRunning = !autoScanRunning;
-    bot.editMessageText(autoScanRunning ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı! Sonuçlar kaydedilecek." : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    const status = autoScanRunning ? "AÇIK ✅" : "KAPALI ❌";
+    bot.editMessageText(autoScanRunning ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı!" : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
+    // Klavyeyi güncelle
+    const newKeyboard = replyKeyboard();
+    newKeyboard.reply_markup.keyboard[3][0].text = `🔔 Oto Sinyal: ${status}`;
+    bot.sendMessage(query.message.chat.id, `Oto Sinyal: ${status}`, { ...newKeyboard });
     if (autoScanRunning) {
       clearInterval(autoScanInterval);
       autoScanInterval = setInterval(runAutoScan, CHECK_INTERVAL);
@@ -232,7 +266,7 @@ bot.on("callback_query", async (query) => {
   }
 
   if (data === "help") {
-    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX, Ichimoku, VWAP.\n📐 Formasyonlar: OBO, İkili Tepe, Üçgenler.\n🕯️ Mumlar: Çekiç, Yutan, Harami.\n🚨 Kırılım: Destek/Direnç takibi.\n💾 Kayıt: Tüm sinyaller ve sonuçları saklanır.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX, Ichimoku, VWAP.\n📐 Formasyonlar: OBO, İkili Tepe, Üçgenler.\n🕯️ Mumlar: Çekiç, Yutan, Harami.\n🚨 Kırılım: Destek/Direnç takibi.\n💾 Kayıt: Tüm sinyaller ve sonuçları saklanır.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML" });
   }
 });
 
