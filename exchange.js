@@ -1,12 +1,15 @@
 const ccxt = require("ccxt");
-const config = require("./config");
 
 class ExchangeClient {
-  constructor() {
-    this.exchange = new ccxt.bitget({
-      apiKey: config.BITGET_API_KEY || "",
-      secret: config.BITGET_SECRET || "",
-      password: config.BITGET_PASSPHRASE || "",
+  constructor(exchangeName = "bitget", apiKey = "", secret = "", password = "") {
+    this.name = exchangeName;
+    const exchangeClass = ccxt[exchangeName];
+    if (!exchangeClass) throw new Error(`Desteklenmeyen borsa: ${exchangeName}`);
+    
+    this.exchange = new exchangeClass({
+      apiKey: apiKey || "",
+      secret: secret || "",
+      password: password || "",
       enableRateLimit: true,
       options: { defaultType: "swap" },
     });
@@ -17,7 +20,7 @@ class ExchangeClient {
       const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
       return ohlcv.map((c) => ({ timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
     } catch (e) {
-      console.error("Kline fetch error:", e.message);
+      console.error(`[${this.name}] Kline fetch error:`, e.message);
       return [];
     }
   }
@@ -27,41 +30,33 @@ class ExchangeClient {
       const ticker = await this.exchange.fetchTicker(symbol);
       return ticker.last;
     } catch (e) {
-      console.error("Price fetch error:", e.message);
+      console.error(`[${this.name}] Price fetch error:`, e.message);
       return null;
     }
   }
 
-  async placeOrder(symbol, side, amount, price = null) {
+  async placeOrder(symbol, side, amount, price = null, leverage = 10, marginMode = "cross") {
     try {
-      await this.exchange.setLeverage(config.LEVERAGE, symbol);
-      await this.exchange.setMarginMode(config.MARGIN_MODE, symbol);
-      
-      // side: 'open_long' or 'open_short' for Bitget via ccxt
-      const order = await this.exchange.createOrder(symbol, "market", side, amount, price, {
-        marginMode: config.MARGIN_MODE,
-      });
+      await this.exchange.setLeverage(leverage, symbol);
+      await this.exchange.setMarginMode(marginMode, symbol);
+      const order = await this.exchange.createOrder(symbol, "market", side, amount, price, { marginMode });
       return order;
     } catch (e) {
-      console.error("Order error:", e.message);
+      console.error(`[${this.name}] Order error:`, e.message);
       throw e;
     }
   }
 
-  async closePosition(symbol, side) {
+  async closePosition(symbol, side, marginMode = "cross") {
     try {
       const positions = await this.exchange.fetchPositions([symbol]);
       const pos = positions.find(p => p.symbol === symbol && parseFloat(p.contracts) > 0);
       if (pos) {
-        // To close long: 'close_long', to close short: 'close_short'
-        return await this.exchange.createOrder(symbol, "market", side, pos.contracts, undefined, {
-          reduceOnly: true,
-          marginMode: config.MARGIN_MODE,
-        });
+        return await this.exchange.createOrder(symbol, "market", side, pos.contracts, undefined, { reduceOnly: true, marginMode });
       }
       return null;
     } catch (e) {
-      console.error("Close position error:", e.message);
+      console.error(`[${this.name}] Close position error:`, e.message);
       return null;
     }
   }
@@ -72,6 +67,10 @@ class ExchangeClient {
     } catch (e) {
       return [];
     }
+  }
+
+  static getSupportedExchanges() {
+    return ["bitget", "binance", "bybit", "okx", "gate"];
   }
 }
 
