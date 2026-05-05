@@ -254,7 +254,8 @@ ${emoji} <b>${signal.type} SİNYALİ</b> ${emoji}
 📡 PSAR: ${signal.psar} | ⚖️ VWAP: $${signal.vwap}
 🎯 <b>Fib:</b> ${fibText}
 
-${signal.aiScore > 75 ? "✅ GÜÇLÜ SİNYAL" : "👀 İzle"}
+🧠 <b>Güven Skoru: ${signal.aiScore}/100</b>
+${signal.aiScore > 80 ? "🔥 ÇOK YÜKSEK İHTİMAL" : signal.aiScore > 70 ? "✅ GÜÇLÜ SİNYAL" : "👀 RİSKLİ / İZLE"}
 `.trim();
 }
 
