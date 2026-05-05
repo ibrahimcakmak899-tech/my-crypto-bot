@@ -1,16 +1,13 @@
 {
   "name": "crypto-trading-bot",
-  "version": "1.0.0",
-  "description": "Telegram crypto trading signal bot",
+  "version": "2.0.0",
+  "description": "Telegram crypto trading signal bot - AI powered",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "backtest": "node backtest.js",
-    "dev": "node --watch bot.js"
+    "start": "node bot.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
-    "ccxt": "^4.4.0",
-    "technicalindicators": "^3.1.0"
+    "ccxt": "^4.4.0"
   }
 }
