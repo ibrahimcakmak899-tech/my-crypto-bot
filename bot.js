@@ -216,34 +216,56 @@ async function runGlobalScan() {
   const activeUsers = Object.entries(userSettings).filter(e => e[1].autoScan);
   if (!activeUsers.length) return;
 
-  console.log("🔍 Tarama başladı...");
+  console.log("🔍 Global tarama başladı...");
   
-  // Tüm USDT çiftlerini tara (Gold/Forex hariç)
+  // Başlangıç bildirimi
+  activeUsers.forEach(([uid]) => {
+      try { bot.sendMessage(Number(uid), "🔍 <b>Tarama Başladı...</b>\n5dk, 15dk, 1s, 4s kontrol ediliyor.", { parse_mode: "HTML" }); } catch(e) {}
+  });
+
   const targets = TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR"));
-  
-  // Tüm zaman dilimleri (Scalp dahil)
   const tfs = ["5m", "15m", "1h", "4h"];
+  let errorCount = 0;
 
   for (const pair of targets) {
     for (const tf of tfs) {
       try {
         const ex = new ExchangeClient("bitget");
         const candles = await ex.getKlines(pair, tf, 200);
-        if (candles.length < 50) continue;
+        
+        if (!candles || candles.length < 50) {
+           console.log(`⚠️ ${pair} ${tf}: Veri yetersiz.`);
+           continue;
+        }
+
         const sig = SignalGenerator.generate(candles, pair, tf);
         
-        if (sig && sig.aiScore >= 70) {
-          activeUsers.forEach(([uid]) => {
-            addSignal(sig);
-            try { bot.sendMessage(Number(uid), formatSignal(sig), { parse_mode: "HTML" }); } catch(e) {}
+        if (sig) {
+          console.log(`📈 Sinyal Adayı: ${pair} ${tf} | Skor: ${sig.aiScore}`);
+          activeUsers.forEach(([uid, settings]) => {
+             if (sig.aiScore >= settings.minScore) {
+                addSignal(sig);
+                try { bot.sendMessage(Number(uid), formatSignal(sig), { parse_mode: "HTML" }); } catch(e) {}
+             }
           });
         }
-      } catch(e) { 
-        console.error(`❌ Tarama Hatası (${pair} - ${tf}):`, e.message); 
+      } catch(e) {
+        console.error(`❌ HATA: ${pair} ${tf} - ${e.message}`);
+        errorCount++;
+        // Hataları kullanıcıya bildir (Spam olmasın diye sadece sayıyı söyleyeceğiz sonda)
       }
     }
-    await new Promise(r => setTimeout(r, 2000));
+    // API limitine takılmamak için her coin arası 1 saniye bekle
+    await new Promise(r => setTimeout(r, 1000));
   }
+  
+  // Bitiş bildirimi
+  activeUsers.forEach(([uid]) => {
+      const msg = errorCount > 0 
+          ? `✅ Tarama bitti. <b>${errorCount} hata</b> tespit edildi.` 
+          : `✅ Tarama tamamlandı, hata yok.`;
+      try { bot.sendMessage(Number(uid), msg, { parse_mode: "HTML" }); } catch(e) {}
+  });
 }
 
 function checkGlobalScan() {
