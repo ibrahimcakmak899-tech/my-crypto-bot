@@ -260,13 +260,23 @@ ${signal.aiScore > 80 ? "🔥 ÇOK YÜKSEK İHTİMAL" : signal.aiScore > 70 ? "�
 }
 
 // --- OTOMATİK TARAMA ---
+let scanIndex = 0; // Her turda farklı coinleri taramak için
+
 async function runAutoScan() {
   if (!autoScanRunning) return;
   
-  const targets = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"];
-  console.log("🔍 Otomatik tarama başlıyor...");
+  const targets = TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR") && !p.startsWith("GBP") && !p.startsWith("AUD") && !p.startsWith("USD"));
+  console.log(`🔍 Otomatik tarama başlıyor... (${targets.length} coin)`);
   
-  for (const pair of targets) {
+  // Her turda 10 coin tara (API limitini korumak için)
+  const batchSize = 10;
+  const batch = targets.slice(scanIndex, scanIndex + batchSize);
+  
+  // Indexi güncelle, sona geldiyse başa dön
+  scanIndex = (scanIndex + batchSize) % targets.length;
+  if (scanIndex === 0) console.log("🔄 Tüm coinler tarandı, başa dönülüyor.");
+  
+  for (const pair of batch) {
     try {
       // 1. Sinyal Taraması
       const candles1h = await exchange.getKlines(pair, "1h", 200);
