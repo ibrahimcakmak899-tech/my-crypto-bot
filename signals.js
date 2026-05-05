@@ -8,19 +8,25 @@ class SignalGenerator {
     const atr = ind.atr;
     if (!atr || atr === 0 || isNaN(atr)) return null;
 
-    const aiScore = this._calculateAIScore(ind, price);
-    if (aiScore < MIN_AI_SCORE) return null;
+    // Zaman dilimine göre strateji
+    const isScalp = timeframe.includes("m") && parseInt(timeframe) <= 15;
+    const isLong = timeframe.includes("h") || timeframe.includes("d");
+
+    const aiScore = this._calculateAIScore(ind, price, timeframe);
+    if (aiScore < 65) return null; // Minimum threshold
 
     const type = aiScore > 50 ? "LONG" : "SHORT";
     
-    const slDistance = atr * ATR_MULTIPLIER_SL;
+    // ATR multiplier timeframe'e göre ayarlanır
+    const atrMult = isScalp ? 1.2 : ATR_MULTIPLIER_SL;
+    const slDistance = atr * atrMult;
     const sl = type === "LONG" ? price - slDistance : price + slDistance;
     const tp1 = price + slDistance * TP1_RR;
     const tp2 = price + slDistance * TP2_RR;
     const tp3 = price + slDistance * TP3_RR;
-    const trailingStop = type === "LONG" ? price - (atr * (ATR_MULTIPLIER_SL + 0.5)) : price + (atr * (ATR_MULTIPLIER_SL + 0.5));
+    const trailingStop = type === "LONG" ? price - (atr * (atrMult + 0.5)) : price + (atr * (atrMult + 0.5));
 
-    const reasons = this._generateReasons(ind, price, type);
+    const reasons = this._generateReasons(ind, price, type, timeframe);
 
     return {
       symbol, timeframe, type,
@@ -54,7 +60,7 @@ class SignalGenerator {
     };
   }
 
-  static _calculateAIScore(ind, price) {
+  static _calculateAIScore(ind, price, timeframe) {
     let score = 50;
     const isUptrend = price > ind.ema50 && ind.ema50 > ind.ema200;
     const isDowntrend = price < ind.ema50 && ind.ema50 < ind.ema200;
@@ -76,7 +82,6 @@ class SignalGenerator {
     const bbPos = (price - ind.bbLower) / (ind.bbUpper - ind.bbLower);
     if (bbPos < 0.2) score += 10; else if (bbPos > 0.8) score -= 10;
 
-    // New Indicators
     if (ind.supertrend.trend === "BULLISH") score += 10; else score -= 10;
     if (ind.psar.trend === "BULLISH") score += 5; else score -= 5;
     
@@ -85,21 +90,24 @@ class SignalGenerator {
 
     if (ind.cci < -100) score += 8; else if (ind.cci > 100) score -= 8;
 
-    // VWAP Check
+    // VWAP & Fib
     if (ind.vwap > 0) {
-      if (price < ind.vwap * 1.02 && price > ind.vwap * 0.98) score += 5; // VWAP civarı
-      if (price < ind.vwap * 0.95) score += 3; // VWAP altında ucuz
+      if (price < ind.vwap * 1.02 && price > ind.vwap * 0.98) score += 5;
+      if (price < ind.vwap * 0.95) score += 3;
     }
-
-    // Fib Golden Pocket (0.618)
     if (ind.fib.levels) {
       const fib0618 = ind.fib.levels.find(l => l.level === 0.618);
       if (fib0618 && price > fib0618.price * 0.99 && price < fib0618.price * 1.01) score += 10;
     }
 
-    const chartStr = ind.chartPatterns ? ind.chartPatterns.filter(p => p.type === "BULLISH").reduce((a, p) => a + p.strength, 0) : 0;
-    const chartBear = ind.chartPatterns ? ind.chartPatterns.filter(p => p.type === "BEARISH").reduce((a, p) => a + p.strength, 0) : 0;
-    score += chartStr * 5; score -= chartBear * 5;
+    // Kısa timeframe'lerde formasyonlara bakma (zaten zayıf sinyal verir)
+    const isScalp = timeframe.includes("m") && parseInt(timeframe) <= 15;
+
+    if (!isScalp) {
+      const chartStr = ind.chartPatterns ? ind.chartPatterns.filter(p => p.type === "BULLISH").reduce((a, p) => a + p.strength, 0) : 0;
+      const chartBear = ind.chartPatterns ? ind.chartPatterns.filter(p => p.type === "BEARISH").reduce((a, p) => a + p.strength, 0) : 0;
+      score += chartStr * 5; score -= chartBear * 5;
+    }
 
     const bullishStr = ind.patterns.filter(p => p.type === "BULLISH").reduce((a, p) => a + p.strength, 0);
     const bearishStr = ind.patterns.filter(p => p.type === "BEARISH").reduce((a, p) => a + p.strength, 0);
@@ -109,8 +117,13 @@ class SignalGenerator {
     return Math.min(Math.max(score, 0), 100);
   }
 
-  static _generateReasons(ind, price, type) {
+  static _generateReasons(ind, price, type, timeframe) {
     const reasons = [];
+    const isScalp = timeframe.includes("m") && parseInt(timeframe) <= 15;
+
+    reasons.push(`🕒 ${timeframe.toUpperCase()} Analizi`);
+    
+    // İndikatörler (Hepsinde)
     if (price > ind.ema50 && ind.ema50 > ind.ema200) reasons.push("📈 Yükseliş Trendi");
     if (ind.supertrend.trend === "BULLISH") reasons.push("🟢 Supertrend Al");
     if (ind.psar.trend === "BULLISH") reasons.push("📡 PSAR Dip");
@@ -124,7 +137,11 @@ class SignalGenerator {
       const nearFib = ind.fib.levels.find(l => Math.abs(price - l.price) / price < 0.01);
       if (nearFib) reasons.push(`🎯 Fib ${nearFib.level} Desteği`);
     }
-    if (ind.chartPatterns && ind.chartPatterns.length) reasons.push("📐 " + ind.chartPatterns.map(p => p.name).join(", "));
+
+    // Sadece 1 saat ve üzerinde formasyonları göster
+    if (!isScalp) {
+      if (ind.chartPatterns && ind.chartPatterns.length) reasons.push("📐 " + ind.chartPatterns.map(p => p.name).join(", "));
+    }
     if (ind.candlestickPatterns && ind.candlestickPatterns.length) reasons.push("🕯️ " + ind.candlestickPatterns.map(p => p.name).join(", "));
     return reasons;
   }

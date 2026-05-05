@@ -272,21 +272,32 @@ bot.on("callback_query", async (query) => {
 
 function formatSignal(signal) {
   const emoji = signal.type === "LONG" ? "🟢" : "🔴";
+  const isScalp = signal.timeframe.includes("m") && parseInt(signal.timeframe) <= 15;
+  
   let fibText = "Yok";
   if (signal.fib && signal.fib.levels) {
     fibText = signal.fib.levels.slice(0, 3).map(l => `${l.level}: $${l.price.toFixed(4)}`).join(" | ");
   }
+
+  // Zaman dilimine göre ikon ve açıklama
+  const tfLabel = signal.timeframe === "5m" ? "⚡ 5 Dk" : 
+                  signal.timeframe === "15m" ? "⚡ 15 Dk" : 
+                  signal.timeframe === "1h" ? "🕐 1 Saatlik" : 
+                  signal.timeframe === "4h" ? "📅 4 Saatlik" : signal.timeframe;
+
+  // Kısa tf'lerde formasyon gösterme
+  const patternText = isScalp ? "" : `\n📐 <b>Grafik:</b> ${signal.chartPatterns || "Yok"}\n🕯️ <b>Mumlar:</b> ${signal.candlestickPatterns || "Yok"}`;
   
   return `
 ${emoji} <b>${signal.type} SİNYALİ</b> ${emoji}
-💎 <b>${signal.symbol}</b> | 📊 ${signal.timeframe}
+💎 <b>${signal.symbol}</b> | ${tfLabel}
 
 💵 Giriş: $${signal.entry}
 🎯 TP1: $${signal.tp1} | TP2: $${signal.tp2}
 🛑 Stop: $${signal.sl}
 
-🧠 ${signal.reasons.join("\n")}
-📐 <b>Grafik:</b> ${signal.chartPatterns || "Yok"}
+🧠 ${signal.reasons.filter(r => !r.startsWith("🕯️") && !r.startsWith("📐")).join("\n")}
+${isScalp ? "📊 <i>Scalp: Sadece indikatörler</i>" : patternText}
 📈 RSI: ${signal.rsi} | Stoch: ${signal.stochK} | ADX: ${signal.adx}
 ☁️ Ichimoku: ${signal.ichimoku} | 🟢 Supertrend: ${signal.supertrend}
 📡 PSAR: ${signal.psar} | ⚖️ VWAP: $${signal.vwap}
@@ -306,48 +317,48 @@ async function runAutoScan() {
   const targets = TRADING_PAIRS.filter(p => p.includes("/USDT") && !p.startsWith("XAU") && !p.startsWith("XAG") && !p.startsWith("EUR") && !p.startsWith("GBP") && !p.startsWith("AUD") && !p.startsWith("USD"));
   console.log(`🔍 Otomatik tarama başlıyor... (${targets.length} coin)`);
   
-  // Her turda 10 coin tara (API limitini korumak için)
-  const batchSize = 10;
+  const timeframes = ["5m", "15m", "1h", "4h"];
+  const batchSize = 5;
   const batch = targets.slice(scanIndex, scanIndex + batchSize);
   
-  // Indexi güncelle, sona geldiyse başa dön
   scanIndex = (scanIndex + batchSize) % targets.length;
   if (scanIndex === 0) console.log("🔄 Tüm coinler tarandı, başa dönülüyor.");
   
   for (const pair of batch) {
-    try {
-      // 1. Sinyal Taraması
-      const candles1h = await exchange.getKlines(pair, "1h", 200);
-      if (candles1h.length > 50) {
-        const signal = SignalGenerator.generate(candles1h, pair, "1h");
-        if (signal && signal.aiScore >= 70) {
-          addSignal(signal);
-          notifySignal(signal);
-        }
-      }
-
-      // 2. Kırılım Taraması (4 Saatlik)
-      const candles4h = await exchange.getKlines(pair, "4h", 100);
-      if (candles4h.length > 50) {
-        const analysis = require("./analysis");
-        const ind = analysis.compute(candles4h);
-        const breakouts = SignalGenerator.checkBreakouts(ind, pair);
+    for (const tf of timeframes) {
+      try {
+        const candles = await exchange.getKlines(pair, tf, 200);
+        if (candles.length < 50) continue;
         
-        for (const b of breakouts) {
-          // Basit tekrar kontrolü
-          const signals = loadSignals();
-          const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
-          if (!recentBreakout) {
-             notifyBreakout(b);
-             addSignal({ symbol: pair, type: b.type === "BREAKOUT" ? "LONG" : "SHORT", entry: b.price, aiScore: 90, timestamp: Date.now(), reasons: ["Kırılım Tespiti"] });
+        const signal = SignalGenerator.generate(candles, pair, tf);
+        
+        if (signal) {
+          // Kısa tf'lerde sadece yüksek skorlu sinyalleri gönder
+          const minScore = tf.includes("m") ? 75 : 70;
+          if (signal.aiScore >= minScore) {
+            addSignal(signal);
+            notifySignal(signal);
           }
         }
-      }
 
-    } catch (e) { console.error(`Hata: ${pair}`, e.message); }
+        // Sadece 4h ve üzerinde kırılım kontrolü yap
+        if (tf === "4h") {
+          const analysis = require("./analysis");
+          const ind = analysis.compute(candles);
+          const breakouts = SignalGenerator.checkBreakouts(ind, pair);
+          for (const b of breakouts) {
+            const signals = loadSignals();
+            const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
+            if (!recentBreakout) {
+               notifyBreakout(b);
+               addSignal({ symbol: pair, type: b.type === "BREAKOUT" ? "LONG" : "SHORT", entry: b.price, aiScore: 90, timestamp: Date.now(), reasons: ["Kırılım Tespiti"] });
+            }
+          }
+        }
+      } catch (e) { /* sessiz geç */ }
+    }
   }
 
-  // 3. Aktif Sinyallerin Sonuçlarını Kontrol Et
   await checkActiveTrades();
 }
 
