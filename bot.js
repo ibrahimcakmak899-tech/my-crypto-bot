@@ -13,6 +13,7 @@ const exchange = new ExchangeClient();
 const chatIds = new Set();
 let autoScanRunning = false;
 let autoScanInterval = null;
+const signalHistory = []; // Stores recent signals
 
 // --- MENÜ TANIMLARI ---
 function mainMenu() {
@@ -29,10 +30,12 @@ function mainMenu() {
         ],
         [
           { text: "📊 Trend Takibi", callback_data: "scan_trend" },
-          { text: "🔔 Oto Sinyal", callback_data: "toggle_auto" }
+          { text: "🕰️ Son Sinyaller", callback_data: "history_1h" }
         ],
-        [{ text: "📋 Aktif İşlemlerim", callback_data: "my_trades" }],
-        [{ text: "ℹ️ Yardım / Info", callback_data: "help" }]
+        [
+          { text: "🔔 Oto Sinyal", callback_data: "toggle_auto" },
+          { text: "ℹ️ Yardım", callback_data: "help" }
+        ]
       ]
     }
   };
@@ -57,7 +60,8 @@ function getPairsByCategory(cat) {
   if (cat === "forex") return ["XAU/USDT", "XAG/USDT", "EUR/USDT", "GBP/USDT", "AUD/USDT", "USD/JPY"];
   if (cat === "meme") return ["DOGE/USDT", "PEPE/USDT", "WIF/USDT", "SHIB/USDT", "FLOKI/USDT"];
   if (cat === "major") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
-  return TRADING_PAIRS; // Default all
+  if (cat === "trend") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT"];
+  return TRADING_PAIRS.slice(0, 20); 
 }
 
 // --- BOT OLAYLARI ---
@@ -75,6 +79,32 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
+  if (data === "history_1h") {
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    const recentSignals = signalHistory.filter(s => s.timestamp > oneHourAgo);
+    
+    let msg = "🕰️ <b>Son 1 Saatlik Sinyaller</b>\n\n";
+    if (recentSignals.length === 0) {
+      msg += "Bu saat içinde kaydedilmiş sinyal yok.";
+    } else {
+      for (const s of recentSignals) {
+        msg += `• <b>${s.symbol}</b> (${s.type}) | Skor: ${s.aiScore}\n`;
+      }
+    }
+    
+    // Summary analysis
+    if (recentSignals.length > 0) {
+      const avgScore = recentSignals.reduce((a,b)=>a+b.aiScore,0)/recentSignals.length;
+      msg += `\n📊 <b>Özet:</b> Ort. AI Skoru: ${avgScore.toFixed(0)}/100`;
+      if (avgScore > 70) msg += " (Piyasa Çok Aktif 🔥)";
+      else if (avgScore > 60) msg += " (Piyasa Hareketli ⚡)";
+      else msg += " (Piyasa Sakin ❄️)";
+    }
+
+    bot.editMessageText(msg, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    return;
+  }
+
   if (data.startsWith("detail_")) {
     const pair = data.split("detail_")[1];
     const msg = await bot.sendMessage(query.message.chat.id, `🔎 ${pair} analiz ediliyor...`);
@@ -86,6 +116,7 @@ bot.on("callback_query", async (query) => {
     const signal = SignalGenerator.generate(candles, pair, "1h");
     if (signal) {
       bot.editMessageText(formatSignal(signal), { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML", disable_web_page_preview: true });
+      addSignalToHistory(signal);
     } else {
       bot.editMessageText(`📊 <b>${pair}</b>\nŞu an için net bir sinyal yok. Piyasa kararsız.`, { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML" });
     }
@@ -115,7 +146,7 @@ bot.on("callback_query", async (query) => {
   if (data === "help") {
     bot.editMessageText(
       "ℹ️ <b>BOT HAKKINDA</b>\n\n" +
-      "📈 <b>Analiz:</b> RSI, MACD, EMA, Bollinger Bands ve Mum Formasyonları.\n" +
+      "📈 <b>İndikatörler:</b> RSI, MACD, Stokastik, ADX, Bollinger, EMA/SMA, Mum Formasyonları.\n" +
       "💱 <b>Piyasalar:</b> Kripto, Altın, Forex.\n" +
       "⚡ <b>Zaman Dilimleri:</b> 15dk, 1s, 4s.\n\n" +
       "⚠️ Bu bir yatırım tavsiyesi değildir. Sinyaller teknik analiz sonuçlarıdır.",
@@ -140,11 +171,19 @@ ${emoji} <b>${signal.type} SİNYALİ</b> ${emoji}
 🎯 <b>TP2:</b> $${signal.tp2}
 🛑 <b>Stop:</b> $${signal.sl}
 
-🧠 <b>Analiz:</b> ${signal.reasons[0] || "Güçlü Trend"}
+🧠 <b>Analiz:</b> ${signal.reasons.join("\n")}
+📈 <b>İndikatörler:</b> RSI: ${signal.rsi} | StochK: ${signal.stochK} | ADX: ${signal.adx}
 🕯️ <b>Mum:</b> ${signal.patterns || "Yok"}
 
 ${signal.aiScore > 75 ? "✅ <b>GÜÇLÜ SİNYAL - İŞLEMELİ</b>" : "👀 İzle"}
 `.trim();
+}
+
+function addSignalToHistory(signal) {
+  signal.timestamp = Date.now();
+  signalHistory.push(signal);
+  // Keep only last 100 signals
+  if (signalHistory.length > 100) signalHistory.shift();
 }
 
 async function runAutoScan() {
@@ -157,6 +196,7 @@ async function runAutoScan() {
       if (candles.length < 50) continue;
       const signal = SignalGenerator.generate(candles, pair, "1h");
       if (signal && signal.aiScore >= 70) {
+        addSignalToHistory(signal);
         for (const cid of chatIds) {
           try { bot.sendMessage(cid, formatSignal(signal), { parse_mode: "HTML" }); } catch(e) {}
         }
