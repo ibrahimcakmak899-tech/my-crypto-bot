@@ -132,6 +132,9 @@ function getPairsByCategory(cat) {
 loadChatIds();
 
 bot.onText(/\/start/, (msg) => {
+  chatIds.add(msg.chat.id);
+  saveChatIds();
+  
   // İlk açılışta buton göster
   bot.sendMessage(msg.chat.id, 
     `👋 <b>Merhaba! Trading Pro Bot'a hoş geldin.</b>\n\n` +
@@ -338,7 +341,14 @@ function notifyBreakout(b) {
 
 function notifySignal(signal) {
   const msg = formatSignal(signal);
-  for (const cid of chatIds) { try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {} }
+  console.log(`📡 Sinyal Bildirimi: ${signal.symbol} - ${chatIds.size} kullanıcıya gönderiliyor.`);
+  for (const cid of chatIds) { 
+      try { 
+          bot.sendMessage(cid, msg, { parse_mode: "HTML" }); 
+      } catch(e) { 
+          console.error(`❌ Bildirim hatası (ID: ${cid}):`, e.message); 
+      } 
+  }
 }
 
 // --- RENDER "KEEP-ALIVE" SİSTEMİ ---
