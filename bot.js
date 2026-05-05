@@ -3,6 +3,8 @@ const ExchangeClient = require("./exchange");
 const SignalGenerator = require("./signals");
 const { TRADING_PAIRS, TIMEFRAMES_AUTO, CHECK_INTERVAL, LEVERAGE } = require("./config");
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 if (!TOKEN) console.error("HATA: TELEGRAM_BOT_TOKEN bulunamadı!");
@@ -13,8 +15,46 @@ const exchange = new ExchangeClient();
 const chatIds = new Set();
 let autoScanRunning = false;
 let autoScanInterval = null;
-const signalHistory = [];
-const knownLevels = {}; // To avoid repeating the same breakout alerts
+
+// Dosya Yolları
+const DATA_PATH = path.join(__dirname, "signals.json");
+
+// --- VERİ TABANI İŞLEMLERİ ---
+function loadSignals() {
+  try {
+    if (fs.existsSync(DATA_PATH)) {
+      return JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
+    }
+  } catch (e) { console.error("Veri yükleme hatası:", e); }
+  return [];
+}
+
+function saveSignals(signals) {
+  try {
+    fs.writeFileSync(DATA_PATH, JSON.stringify(signals, null, 2));
+  } catch (e) { console.error("Veri kaydetme hatası:", e); }
+}
+
+function addSignal(signal) {
+  const signals = loadSignals();
+  signal.id = Date.now() + "_" + signal.symbol;
+  signal.status = "active"; // active, tp1, tp2, sl
+  signal.timestamp = Date.now();
+  signals.unshift(signal); // En başa ekle
+  // Sadece son 50 sinyali tut
+  if (signals.length > 50) signals.pop();
+  saveSignals(signals);
+}
+
+function updateSignalStatus(id, status) {
+  const signals = loadSignals();
+  const index = signals.findIndex(s => s.id === id);
+  if (index !== -1) {
+    signals[index].status = status;
+    signals[index].closeTime = Date.now();
+    saveSignals(signals);
+  }
+}
 
 // --- MENÜ TANIMLARI ---
 function mainMenu() {
@@ -31,7 +71,7 @@ function mainMenu() {
         ],
         [
           { text: "📊 Trend Takibi", callback_data: "scan_trend" },
-          { text: "🕰️ Son Sinyaller", callback_data: "history_1h" }
+          { text: "🕰️ Son Sinyaller", callback_data: "history" }
         ],
         [
           { text: "🔔 Oto Sinyal", callback_data: "toggle_auto" },
@@ -54,7 +94,7 @@ function scanMenu(category) {
 }
 
 function getPairsByCategory(cat) {
-  if (cat === "forex") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT"]; // Forex not available on all exchanges
+  if (cat === "forex") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "AVAX/USDT"];
   if (cat === "meme") return ["DOGE/USDT", "PEPE/USDT", "WIF/USDT", "SHIB/USDT", "FLOKI/USDT"];
   if (cat === "major") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
   if (cat === "trend") return ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT"];
@@ -67,9 +107,8 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, "🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Menüden işlem yapabilirsin.", { parse_mode: "HTML", ...mainMenu() });
 });
 
-// Test komutu
 bot.onText(/\/test/, (msg) => {
-  bot.sendMessage(msg.chat.id, "✅ <b>BOT BAĞLANTISI AKTİF!</b>\nOtomatik bildirimler çalışıyor.", { parse_mode: "HTML" });
+  bot.sendMessage(msg.chat.id, "✅ <b>BOT BAĞLANTISI AKTİF!</b>\nOtomatik bildirimler ve kayıt sistemi çalışıyor.", { parse_mode: "HTML" });
 });
 
 bot.on("callback_query", async (query) => {
@@ -81,16 +120,27 @@ bot.on("callback_query", async (query) => {
     return;
   }
 
-  if (data === "history_1h") {
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    const recentSignals = signalHistory.filter(s => s.timestamp > oneHourAgo);
-    let msg = "🕰️ <b>Son 1 Saatlik Sinyaller</b>\n\n";
-    if (recentSignals.length === 0) msg += "Bu saat içinde sinyal yok.";
-    else {
-      for (const s of recentSignals) msg += `• <b>${s.symbol}</b> (${s.type}) | Skor: ${s.aiScore}\n`;
-      const avgScore = recentSignals.reduce((a,b)=>a+b.aiScore,0)/recentSignals.length;
-      msg += `\n📊 Ort. Skor: ${avgScore.toFixed(0)}/100`;
+  if (data === "history") {
+    const signals = loadSignals();
+    let msg = "🕰️ <b>Son Sinyaller ve Durumları</b>\n\n";
+    
+    if (signals.length === 0) {
+      msg += "Henüz hiç sinyal yok.";
+    } else {
+      // Son 10 sinyali göster
+      signals.slice(0, 10).forEach(s => {
+        let icon = "⏳";
+        if (s.status === "tp1" || s.status === "tp2" || s.status === "tp3") icon = "✅";
+        if (s.status === "sl") icon = "❌";
+        
+        msg += `${icon} <b>${s.symbol}</b> (${s.type})\n`;
+        msg += `   Giriş: $${s.entry} | Skor: ${s.aiScore}\n`;
+        if (s.status !== "active") msg += `   <b>Sonuç: ${s.status.toUpperCase()}</b>\n`;
+        else msg += `   SL: $${s.sl} | TP1: $${s.tp1}\n`;
+        msg += "\n";
+      });
     }
+    
     bot.editMessageText(msg, { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
     return;
   }
@@ -103,7 +153,7 @@ bot.on("callback_query", async (query) => {
     const signal = SignalGenerator.generate(candles, pair, "1h");
     if (signal) {
       bot.editMessageText(formatSignal(signal), { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML" });
-      addSignalToHistory(signal);
+      addSignal(signal); // Kaydet
     } else { bot.editMessageText(`📊 ${pair}: Net sinyal yok.`, { chat_id: query.message.chat.id, message_id: msg.message_id, parse_mode: "HTML" }); }
     return;
   }
@@ -116,7 +166,7 @@ bot.on("callback_query", async (query) => {
 
   if (data === "toggle_auto") {
     autoScanRunning = !autoScanRunning;
-    bot.editMessageText(autoScanRunning ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı!" : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText(autoScanRunning ? "🔔 <b>OTO SİNYAL AÇIK</b>\nKırılım ve Trend takibi başlatıldı! Sonuçlar kaydedilecek." : "🔕 <b>OTO SİNYAL KAPALI</b>", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
     if (autoScanRunning) {
       clearInterval(autoScanInterval);
       autoScanInterval = setInterval(runAutoScan, CHECK_INTERVAL);
@@ -126,7 +176,7 @@ bot.on("callback_query", async (query) => {
   }
 
   if (data === "help") {
-    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX.\n🕯️ Mum Formasyonları: Çekiç, Yutan, vb.\n🚨 Kırılım: Destek/Direnç takibi.\n\n⚠️ Yatırım tavsiyesi değildir.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX.\n🕯️ Mum Formasyonları: Çekiç, Yutan, vb.\n🚨 Kırılım: Destek/Direnç takibi.\n💾 Kayıt: Tüm sinyaller ve sonuçları saklanır.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
   }
 });
 
@@ -148,24 +198,26 @@ ${signal.aiScore > 75 ? "✅ GÜÇLÜ SİNYAL" : "👀 İzle"}
 `.trim();
 }
 
-function addSignalToHistory(signal) {
-  signal.timestamp = Date.now();
-  signalHistory.push(signal);
-  if (signalHistory.length > 100) signalHistory.shift();
-}
-
-// --- OTOMATİK TARAMA (ANA DÖNGÜ) ---
+// --- OTOMATİK TARAMA ---
 async function runAutoScan() {
   if (!autoScanRunning) return;
   
-  // Önemli coinler + Forex muadilleri
   const targets = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT", "AVAX/USDT", "LINK/USDT"];
-  
   console.log("🔍 Otomatik tarama başlıyor...");
   
   for (const pair of targets) {
     try {
-      // Kırılım Tespiti İçin 4 Saatlik Veri
+      // 1. Sinyal Taraması
+      const candles1h = await exchange.getKlines(pair, "1h", 200);
+      if (candles1h.length > 50) {
+        const signal = SignalGenerator.generate(candles1h, pair, "1h");
+        if (signal && signal.aiScore >= 70) {
+          addSignal(signal);
+          notifySignal(signal);
+        }
+      }
+
+      // 2. Kırılım Taraması (4 Saatlik)
       const candles4h = await exchange.getKlines(pair, "4h", 100);
       if (candles4h.length > 50) {
         const analysis = require("./analysis");
@@ -173,86 +225,76 @@ async function runAutoScan() {
         const breakouts = SignalGenerator.checkBreakouts(ind, pair);
         
         for (const b of breakouts) {
-          const key = `${pair}_${b.level}`;
-          // Aynı seviyeden ard arda bildirim gitmesini engelle (Son 2 saatte gitmediyse)
-          if (!knownLevels[key] || Date.now() - knownLevels[key] > 7200000) {
-            knownLevels[key] = Date.now();
-            notifyBreakout(b);
+          // Basit tekrar kontrolü (son 2 saatte aynı semboldan bildirim gitmediyse)
+          const signals = loadSignals();
+          const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
+          if (!recentBreakout) {
+             notifyBreakout(b);
+             // Breakout'u da kaydedelim
+             addSignal({ symbol: pair, type: b.type === "BREAKOUT" ? "LONG" : "SHORT", entry: b.price, aiScore: 90, timestamp: Date.now(), reasons: ["Kırılım Tespiti"] });
           }
-        }
-      }
-
-      // Sinyal Tespiti İçin 1 Saatlik Veri
-      const candles1h = await exchange.getKlines(pair, "1h", 200);
-      if (candles1h.length > 50) {
-        const signal = SignalGenerator.generate(candles1h, pair, "1h");
-        if (signal && signal.aiScore >= 70) {
-          notifySignal(signal);
-          addSignalToHistory(signal);
-        }
-      }
-
-      // 15 Dk Taraması (Scalp)
-      const candles15m = await exchange.getKlines(pair, "15m", 100);
-      if (candles15m.length > 50) {
-        const signal15 = SignalGenerator.generate(candles15m, pair, "15m");
-        if (signal15 && signal15.aiScore >= 80) {
-           notifySignal(signal15); // Çok güçlü 15dk sinyallerini de at
-           addSignalToHistory(signal15);
         }
       }
 
     } catch (e) { console.error(`Hata: ${pair}`, e.message); }
   }
+
+  // 3. Aktif Sinyallerin Sonuçlarını Kontrol Et
+  await checkActiveTrades();
+}
+
+async function checkActiveTrades() {
+  const signals = loadSignals();
+  const activeSignals = signals.filter(s => s.status === "active");
+
+  for (const s of activeSignals) {
+    try {
+      const currentPrice = await exchange.getPrice(s.symbol);
+      if (!currentPrice) continue;
+
+      let newStatus = null;
+      let msg = "";
+
+      if (s.type === "LONG") {
+        if (currentPrice <= s.sl) { newStatus = "sl"; msg = `❌ <b>STOP OLDU!</b>\n${s.symbol} @ $${currentPrice}`; }
+        else if (currentPrice >= s.tp2) { newStatus = "tp2"; msg = `🎉 <b>TP2 ALDI!</b>\n${s.symbol} @ $${currentPrice}`; }
+        else if (currentPrice >= s.tp1) { newStatus = "tp1"; msg = `✅ <b>TP1 ALDI!</b>\n${s.symbol} @ $${currentPrice}`; }
+      } else if (s.type === "SHORT") {
+        if (currentPrice >= s.sl) { newStatus = "sl"; msg = `❌ <b>STOP OLDU!</b>\n${s.symbol} @ $${currentPrice}`; }
+        else if (currentPrice <= s.tp2) { newStatus = "tp2"; msg = `🎉 <b>TP2 ALDI!</b>\n${s.symbol} @ $${currentPrice}`; }
+        else if (currentPrice <= s.tp1) { newStatus = "tp1"; msg = `✅ <b>TP1 ALDI!</b>\n${s.symbol} @ $${currentPrice}`; }
+      }
+
+      if (newStatus) {
+        updateSignalStatus(s.id, newStatus);
+        // Tüm kullanıcılara bildir
+        for (const cid of chatIds) {
+          try { await bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {}
+        }
+      }
+    } catch (e) { console.error(`Kontrol Hatası: ${s.symbol}`, e.message); }
+  }
 }
 
 function notifyBreakout(b) {
-  const msg = `
-🚨 <b>KIRILIM TESPİT EDİLDİ!</b> 🚨
-${b.msg}
-
-<b>Sembol:</b> ${b.symbol}
-<b>Fiyat:</b> $${b.price}
-<b>Seviye:</b> $${b.level}
-
-🔥 <b>HACİM DESTEKLİ!</b>
-`.trim();
-  
-  for (const cid of chatIds) {
-    try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {}
-  }
+  const msg = `🚨 <b>KIRILIM TESPİT EDİLDİ!</b> 🚨\n${b.msg}\n\n<b>Sembol:</b> ${b.symbol}\n<b>Fiyat:</b> $${b.price}\n<b>Seviye:</b> $${b.level}\n\n🔥 <b>HACİM DESTEKLİ!</b>`;
+  for (const cid of chatIds) { try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {} }
 }
 
 function notifySignal(signal) {
   const msg = formatSignal(signal);
-  for (const cid of chatIds) {
-    try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {}
-  }
+  for (const cid of chatIds) { try { bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {} }
 }
 
 // --- RENDER "KEEP-ALIVE" SİSTEMİ ---
-// Render'ın uygulamayı uyutmaması için 5 dakikada bir kendine istek atar
-setInterval(async () => {
-  try {
-    // Kendi render URL'ine ping atar (URL'yi env variable'dan almalıyız ama localhost denemesi yapar)
-    // Render dışarıdan ping gerektirir ama bu kodun kendi içinde basit bir http server olması yeterlidir.
-    console.log("💓 Bot uyanık...");
-  } catch(e) {}
-}, 300000);
-
-// HTTP Sunucusu (Render'ın botu canlı tutması için şart)
 http.createServer((req, res) => {
   res.writeHead(200);
   res.end("Bot is alive.");
 }).listen(process.env.PORT || 3000, () => {
   console.log(`✅ Sunucu port ${process.env.PORT || 3000} üzerinde çalışıyor.`);
-  
-  // Bot açılınca test mesajı at
   setTimeout(async () => {
     for (const cid of chatIds) {
-      try {
-        await bot.sendMessage(cid, "🟢 <b>BOT BAŞLADI!</b>\nSistem aktif, kırılım takibi çalışıyor.", { parse_mode: "HTML" });
-      } catch(e) {}
+      try { await bot.sendMessage(cid, "🟢 <b>BOT BAŞLADI!</b>\nSistem aktif, sinyaller kaydediliyor.", { parse_mode: "HTML" }); } catch(e) {}
     }
   }, 5000);
 });
