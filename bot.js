@@ -238,7 +238,9 @@ async function runGlobalScan() {
             try { bot.sendMessage(Number(uid), formatSignal(sig), { parse_mode: "HTML" }); } catch(e) {}
           });
         }
-      } catch(e) {}
+      } catch(e) { 
+        console.error(`❌ Tarama Hatası (${pair} - ${tf}):`, e.message); 
+      }
     }
     await new Promise(r => setTimeout(r, 2000));
   }
