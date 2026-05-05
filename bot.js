@@ -17,13 +17,14 @@ let autoScanRunning = false;
 let autoScanInterval = null;
 
 // Dosya Yolları
-const DATA_PATH = path.join(__dirname, "signals.json");
+const SIGNALS_PATH = path.join(__dirname, "signals.json");
+const USERS_PATH = path.join(__dirname, "users.json");
 
 // --- VERİ TABANI İŞLEMLERİ ---
 function loadSignals() {
   try {
-    if (fs.existsSync(DATA_PATH)) {
-      return JSON.parse(fs.readFileSync(DATA_PATH, "utf8"));
+    if (fs.existsSync(SIGNALS_PATH)) {
+      return JSON.parse(fs.readFileSync(SIGNALS_PATH, "utf8"));
     }
   } catch (e) { console.error("Veri yükleme hatası:", e); }
   return [];
@@ -31,8 +32,23 @@ function loadSignals() {
 
 function saveSignals(signals) {
   try {
-    fs.writeFileSync(DATA_PATH, JSON.stringify(signals, null, 2));
+    fs.writeFileSync(SIGNALS_PATH, JSON.stringify(signals, null, 2));
   } catch (e) { console.error("Veri kaydetme hatası:", e); }
+}
+
+function loadChatIds() {
+  try {
+    if (fs.existsSync(USERS_PATH)) {
+      const ids = JSON.parse(fs.readFileSync(USERS_PATH, "utf8"));
+      ids.forEach(id => chatIds.add(id));
+    }
+  } catch (e) { console.error("Kullanıcı yükleme hatası:", e); }
+}
+
+function saveChatIds() {
+  try {
+    fs.writeFileSync(USERS_PATH, JSON.stringify(Array.from(chatIds)));
+  } catch (e) { console.error("Kullanıcı kaydetme hatası:", e); }
 }
 
 function addSignal(signal) {
@@ -41,7 +57,6 @@ function addSignal(signal) {
   signal.status = "active"; // active, tp1, tp2, sl
   signal.timestamp = Date.now();
   signals.unshift(signal); // En başa ekle
-  // Sadece son 50 sinyali tut
   if (signals.length > 50) signals.pop();
   saveSignals(signals);
 }
@@ -57,6 +72,16 @@ function updateSignalStatus(id, status) {
 }
 
 // --- MENÜ TANIMLARI ---
+function startMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🚀 SİNYALLERİ BAŞLAT", callback_data: "start_btn" }]
+      ]
+    }
+  };
+}
+
 function mainMenu() {
   return {
     reply_markup: {
@@ -102,18 +127,43 @@ function getPairsByCategory(cat) {
 }
 
 // --- BOT OLAYLARI ---
-bot.onText(/\/start/, (msg) => {
-  chatIds.add(msg.chat.id);
-  bot.sendMessage(msg.chat.id, "🤖 <b>TRADING PRO BOT</b>\n\nSistem çalışıyor! Menüden işlem yapabilirsin.", { parse_mode: "HTML", ...mainMenu() });
-});
 
-bot.onText(/\/test/, (msg) => {
-  bot.sendMessage(msg.chat.id, "✅ <b>BOT BAĞLANTISI AKTİF!</b>\nOtomatik bildirimler ve kayıt sistemi çalışıyor.", { parse_mode: "HTML" });
+// Kayıtlı kullanıcıları yükle
+loadChatIds();
+
+bot.onText(/\/start/, (msg) => {
+  // İlk açılışta buton göster
+  bot.sendMessage(msg.chat.id, 
+    `👋 <b>Merhaba! Trading Pro Bot'a hoş geldin.</b>\n\n` +
+    `🤖 Ben senin kişisel teknik analiz asistanınım.\n` +
+    `📊 18 indikatör, grafik formasyonları ve AI skoru ile piyasayı tarıyorum.\n\n` +
+    `🚀 Analize başlamak için butona tıkla!`, 
+    { parse_mode: "HTML", ...startMenu() }
+  );
 });
 
 bot.on("callback_query", async (query) => {
   const data = query.data;
   bot.answerCallbackQuery(query.id);
+
+  // Start Button Handler
+  if (data === "start_btn") {
+    chatIds.add(query.message.chat.id);
+    saveChatIds();
+    
+    bot.editMessageText(
+      `✅ <b>Sistem Başlatıldı!</b>\n\n` +
+      `🔔 Artık tüm sinyaller ve kırılımlar buraya düşecek.\n` +
+      `Menüden istediğin analizi seçebilirsin.`,
+      { 
+        chat_id: query.message.chat.id, 
+        message_id: query.message.message_id, 
+        parse_mode: "HTML", 
+        ...mainMenu() 
+      }
+    );
+    return;
+  }
 
   if (data === "back_menu") {
     bot.editMessageText("🤖 <b>TRADING PRO BOT</b>\nAna menüye döndünüz.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
@@ -127,7 +177,6 @@ bot.on("callback_query", async (query) => {
     if (signals.length === 0) {
       msg += "Henüz hiç sinyal yok.";
     } else {
-      // Son 10 sinyali göster
       signals.slice(0, 10).forEach(s => {
         let icon = "⏳";
         if (s.status === "tp1" || s.status === "tp2" || s.status === "tp3") icon = "✅";
@@ -176,12 +225,17 @@ bot.on("callback_query", async (query) => {
   }
 
   if (data === "help") {
-    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX.\n🕯️ Mum Formasyonları: Çekiç, Yutan, vb.\n🚨 Kırılım: Destek/Direnç takibi.\n💾 Kayıt: Tüm sinyaller ve sonuçları saklanır.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
+    bot.editMessageText("ℹ️ <b>BOT HAKKINDA</b>\n\n📈 İndikatörler: RSI, MACD, Stokastik, ADX, Ichimoku, VWAP.\n📐 Formasyonlar: OBO, İkili Tepe, Üçgenler.\n🕯️ Mumlar: Çekiç, Yutan, Harami.\n🚨 Kırılım: Destek/Direnç takibi.\n💾 Kayıt: Tüm sinyaller ve sonuçları saklanır.", { chat_id: query.message.chat.id, message_id: query.message.message_id, parse_mode: "HTML", ...mainMenu() });
   }
 });
 
 function formatSignal(signal) {
   const emoji = signal.type === "LONG" ? "🟢" : "🔴";
+  let fibText = "Yok";
+  if (signal.fib && signal.fib.levels) {
+    fibText = signal.fib.levels.slice(0, 3).map(l => `${l.level}: $${l.price.toFixed(4)}`).join(" | ");
+  }
+  
   return `
 ${emoji} <b>${signal.type} SİNYALİ</b> ${emoji}
 💎 <b>${signal.symbol}</b> | 📊 ${signal.timeframe}
@@ -191,8 +245,11 @@ ${emoji} <b>${signal.type} SİNYALİ</b> ${emoji}
 🛑 Stop: $${signal.sl}
 
 🧠 ${signal.reasons.join("\n")}
+📐 <b>Grafik:</b> ${signal.chartPatterns || "Yok"}
 📈 RSI: ${signal.rsi} | Stoch: ${signal.stochK} | ADX: ${signal.adx}
-🕯️ ${signal.patterns || "Yok"}
+☁️ Ichimoku: ${signal.ichimoku} | 🟢 Supertrend: ${signal.supertrend}
+📡 PSAR: ${signal.psar} | ⚖️ VWAP: $${signal.vwap}
+🎯 <b>Fib:</b> ${fibText}
 
 ${signal.aiScore > 75 ? "✅ GÜÇLÜ SİNYAL" : "👀 İzle"}
 `.trim();
@@ -225,12 +282,11 @@ async function runAutoScan() {
         const breakouts = SignalGenerator.checkBreakouts(ind, pair);
         
         for (const b of breakouts) {
-          // Basit tekrar kontrolü (son 2 saatte aynı semboldan bildirim gitmediyse)
+          // Basit tekrar kontrolü
           const signals = loadSignals();
           const recentBreakout = signals.find(s => s.symbol === pair && s.type === b.type && (Date.now() - s.timestamp < 7200000));
           if (!recentBreakout) {
              notifyBreakout(b);
-             // Breakout'u da kaydedelim
              addSignal({ symbol: pair, type: b.type === "BREAKOUT" ? "LONG" : "SHORT", entry: b.price, aiScore: 90, timestamp: Date.now(), reasons: ["Kırılım Tespiti"] });
           }
         }
@@ -267,7 +323,6 @@ async function checkActiveTrades() {
 
       if (newStatus) {
         updateSignalStatus(s.id, newStatus);
-        // Tüm kullanıcılara bildir
         for (const cid of chatIds) {
           try { await bot.sendMessage(cid, msg, { parse_mode: "HTML" }); } catch(e) {}
         }
