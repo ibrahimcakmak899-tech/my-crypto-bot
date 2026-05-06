@@ -6,6 +6,7 @@ class SignalGenerator {
     const ind = Analysis.compute(candles);
     const price = ind.currentPrice;
     const atr = ind.atr;
+    if (!price || isNaN(price) || price <= 0) return null;
     if (!atr || atr === 0 || isNaN(atr)) return null;
 
     // Zaman dilimine göre strateji
@@ -13,9 +14,11 @@ class SignalGenerator {
     const isLong = timeframe.includes("h") || timeframe.includes("d");
 
     const aiScore = this._calculateAIScore(ind, price, timeframe);
-    if (aiScore < 65) return null; // Minimum threshold
+    if (aiScore === 50) return null; // Nötr, sinyal yok
 
     const type = aiScore > 50 ? "LONG" : "SHORT";
+    const deviation = Math.abs(aiScore - 50);
+    if (deviation < 15) return null; // Yeterli güç yok
     
     // ATR multiplier timeframe'e göre ayarlanır
     const atrMult = isScalp ? 1.2 : ATR_MULTIPLIER_SL;
@@ -43,6 +46,7 @@ class SignalGenerator {
       atr: parseFloat(atr.toFixed(6)),
       volumeRatio: parseFloat(ind.volumeRatio.toFixed(2)),
       aiScore: aiScore,
+      deviation: deviation,
       patterns: ind.patterns.map(p => p.name).join(", "),
       chartPatterns: ind.chartPatterns ? ind.chartPatterns.map(p => p.name).join(", ") : "Yok",
       candlestickPatterns: ind.candlestickPatterns ? ind.candlestickPatterns.map(p => p.name).join(", ") : "Yok",
@@ -79,7 +83,8 @@ class SignalGenerator {
 
     if (ind.macdHistogram > 0) score += 10; else score -= 10;
 
-    const bbPos = (price - ind.bbLower) / (ind.bbUpper - ind.bbLower);
+    const bbRange = ind.bbUpper - ind.bbLower;
+    const bbPos = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
     if (bbPos < 0.2) score += 10; else if (bbPos > 0.8) score -= 10;
 
     if (ind.supertrend.trend === "BULLISH") score += 10; else score -= 10;

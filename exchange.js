@@ -16,12 +16,21 @@ class ExchangeClient {
   }
 
   async getKlines(symbol, timeframe = "1h", limit = 300) {
-    try {
-      const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
-      return ohlcv.map((c) => ({ timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
-    } catch (e) {
-      console.error(`[${this.name}] Kline fetch error:`, e.message);
-      return [];
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        const ohlcv = await this.exchange.fetchOHLCV(symbol, timeframe, undefined, limit);
+        if (!ohlcv || ohlcv.length === 0) return [];
+        return ohlcv.map((c) => ({ timestamp: c[0], open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] }));
+      } catch (e) {
+        retries--;
+        if (retries === 0) {
+          console.error(`[${this.name}] Kline fetch error (${symbol} ${timeframe}):`, e.message);
+          return [];
+        }
+        const delay = e.message.includes("429") || e.message.includes("rate") ? 5000 : 2000;
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
   }
 

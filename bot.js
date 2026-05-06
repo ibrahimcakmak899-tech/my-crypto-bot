@@ -115,6 +115,7 @@ bot.on("callback_query", async (query) => {
     }
   } catch (e) {
     console.error("Callback Error:", e.message);
+    try { bot.sendMessage(uid, `❌ Analiz hatası: ${e.message}`); } catch(err) {}
   }
 });
 
@@ -245,10 +246,12 @@ async function runGlobalScan() {
   const tfs = ["5m", "15m", "1h", "4h"];
   let errorCount = 0;
 
+  // ExchangeClient tek sefer oluşturulur, rate limiter düzgün çalışır
+  const ex = new ExchangeClient("bitget");
+
   for (const pair of targets) {
     for (const tf of tfs) {
       try {
-        const ex = new ExchangeClient("bitget");
         const candles = await ex.getKlines(pair, tf, 200);
         
         if (!candles || candles.length < 50) {
@@ -260,8 +263,8 @@ async function runGlobalScan() {
         
         if (sig) {
           console.log(`📈 Sinyal Adayı: ${pair} ${tf} | Skor: ${sig.aiScore}`);
-          activeUsers.forEach(([uid, settings]) => {
-             if (sig.aiScore >= settings.minScore) {
+           activeUsers.forEach(([uid, settings]) => {
+              if (sig.deviation >= (settings.minScore - 50)) {
                 addSignal(sig);
                 try { bot.sendMessage(Number(uid), formatSignal(sig), { parse_mode: "HTML" }); } catch(e) {}
              }
