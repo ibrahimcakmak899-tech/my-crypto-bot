@@ -11,7 +11,7 @@ class ExchangeClient {
       secret: secret || "",
       password: password || "",
       enableRateLimit: true,
-      options: { defaultType: "swap" },
+      options: { defaultType: "spot" },
     });
   }
 

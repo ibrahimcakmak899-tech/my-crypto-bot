@@ -154,6 +154,24 @@ bot.onText(/🕰️ Son Sinyaller/, (msg) => {
   bot.sendMessage(msg.chat.id, "🕰️ <b>Son Sinyaller</b>\n" + txt, { parse_mode: "HTML" });
 });
 
+bot.onText(/\/test/, async (msg) => {
+  bot.sendMessage(msg.chat.id, "⏳ Sistem test ediliyor (BTC/USDT)...");
+  try {
+    const ex = new ExchangeClient("bitget");
+    const candles = await ex.getKlines("BTC/USDT", "1h", 100);
+    if (!candles || candles.length < 10) throw new Error("Veri alınamadı (Boş döndü).");
+    
+    const sig = SignalGenerator.generate(candles, "BTC/USDT", "1h");
+    if (sig) {
+      bot.sendMessage(msg.chat.id, `✅ <b>TEST BAŞARILI!</b>\n\nSinyal: ${sig.type}\nSkor: ${sig.aiScore}\n\nBot çalışıyor, veri akışı var.`);
+    } else {
+      bot.sendMessage(msg.chat.id, "✅ <b>Bağlantı Başarılı!</b>\nVeriler geliyor ama şu an BTC için yeterli puan (70+) oluşmamış. Bot çalışıyor.");
+    }
+  } catch (e) {
+    bot.sendMessage(msg.chat.id, `❌ <b>TEST HATASI:</b>\n${e.message}\n\nLütfen bu hatayı kontrol et.`);
+  }
+});
+
 // Komutlar
 bot.onText(/\/skor (.+)/, (msg, match) => {
   const s = parseInt(match[1]);
